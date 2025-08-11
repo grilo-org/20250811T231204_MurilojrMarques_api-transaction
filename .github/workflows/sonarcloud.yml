@@ -1,0 +1,66 @@
+
+name: Grilo SC Analysis for Compiled Languages
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch: {}
+
+jobs:
+  scan:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Passo de Setup específico para Go, se for um projeto Go
+      - name: Set up Go
+        if: "endsWith(github.repository, '_go')" # Heurística: se o repo terminar com _go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21' # Use uma versão LTS ou a do projeto
+
+      - name: Download Sonar build-wrapper
+        run: |
+          curl -sSLo build-wrapper.zip https://sonarcloud.io/static/cpp/build-wrapper-linux-x86.zip
+          unzip -o build-wrapper.zip
+          mv build-wrapper-linux-x86 build-wrapper
+
+      - name: Attempt intelligent build with wrapper
+        id: build_step
+        run: |
+          BUILD_COMMAND="echo 'No specific build command found, running analysis on source files.'"
+          if [ -f "pom.xml" ]; then
+            BUILD_COMMAND="mvn clean install -DskipTests"
+          elif [ -f "build.sbt" ]; then
+            BUILD_COMMAND="sbt compile"
+          elif [ -f "Makefile" ]; then
+            BUILD_COMMAND="make"
+          elif [ -f "go.mod" ]; then
+            # Para Go, o build é importante, mas a análise do Sonar fará o trabalho pesado
+            BUILD_COMMAND="go build ./..."
+          elif [ -f "Package.swift" ]; then
+            BUILD_COMMAND="swift build"
+          fi
+          
+          echo "Detected build command: $BUILD_COMMAND"
+          
+          ./build-wrapper/build-wrapper-linux-x86-64 --out-dir bw-output $BUILD_COMMAND
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: >-
+            -Dsonar.projectKey=grilo-org_20250811T231204_MurilojrMarques_api-transaction
+            -Dsonar.projectName=20250811T231204_MurilojrMarques_api-transaction
+            -Dsonar.organization=grilo-org
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.go.binaries=./ # Diz ao Sonar para procurar os binários Go aqui
+            -Dsonar.cfamily.build-wrapper-output=bw-output
